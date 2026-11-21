@@ -84,6 +84,15 @@ void KgGeneral::createViewerTab()
                                         i18n("If checked, the Viewer tab bar will hide if only one tab is open"),
                                         PAGE_VIEWER));
 
+    tabLayout->addWidget(createCheckBox("General",
+                                        "Mouse Wheel Switches Images",
+                                        Defaults::wheelSwitchImages,
+                                        i18n("Switch images with mouse wheel / arrow keys"),
+                                        tab,
+                                        false,
+                                        i18n("If checked, scrolling the mouse wheel (and pressing left/right arrow keys) while viewing an image switches to the next/previous image in the same folder"),
+                                        PAGE_VIEWER));
+
     // ------------------------- viewer ----------------------------------
 
     QGroupBox *viewerGrp = createFrame(i18n("Viewer"), tab);

@@ -44,6 +44,7 @@
 
 #include "../defaults.h"
 #include "../icon.h"
+#include "imagebrowser.h"
 #include "panelviewer.h"
 #include "viewertabbar.h"
 
@@ -64,9 +65,16 @@ KrViewer::KrViewer(QWidget *parent)
     : KParts::MainWindow(parent, Qt::WindowFlags())
     , manager(this, this)
     , tabWidget(this)
+    , imageBrowser(new ImageBrowser(this))
     , sizeX(-1)
     , sizeY(-1)
 {
+    // The mouse wheel and the arrow keys are delivered to the part's widget.
+    // As the image widget (e.g. Gwenview's QGraphicsView) consumes the wheel
+    // event itself, a filter installed on the widget is not enough - an
+    // application wide filter is used instead. It is installed only once here.
+    qApp->installEventFilter(this);
+
     // setWFlags(Qt::WType_TopLevel | WDestructiveClose);
     setHelpMenuEnabled(false);
 
@@ -105,6 +113,12 @@ KrViewer::KrViewer(QWidget *parent)
 
     addCustomMenuAction("textEditor", i18n("Text &Editor"), SLOT(editText()), Qt::CTRL | Qt::SHIFT | Qt::Key_E);
     viewerMenu->addSeparator();
+
+    // NOTE: no keyboard shortcut for Next/Previous Image here. Arrow keys are
+    // handled by the event filter while an image part is active. Binding them
+    // to menu actions would steal the arrow keys from text/hex viewers.
+    addCustomMenuAction("nextImage", i18n("&Next Image"), SLOT(nextImage()), QKeySequence());
+    addCustomMenuAction("prevImage", i18n("&Previous Image"), SLOT(prevImage()), QKeySequence());
 
     const QList<QAction *> actList = menuBar()->actions();
     bool hasPrint = false, hasCopy = false;
@@ -237,8 +251,43 @@ void KrViewer::configureShortcuts()
     KShortcutsDialog::showDialog(actionCollection(), KShortcutsEditor::LetterShortcutsAllowed, this);
 }
 
-bool KrViewer::eventFilter(QObject * /* watched */, QEvent *e)
+bool KrViewer::eventFilter(QObject *watched, QEvent *e)
 {
+    // Image browsing: the mouse wheel and the arrow keys switch between all
+    // images of the current directory.
+    KConfigGroup group(krConfig, "General");
+    const bool wheelSwitchImages = group.readEntry("Mouse Wheel Switches Images", Defaults::wheelSwitchImages);
+
+    if (wheelSwitchImages && isImagePartDisplayed() && belongsToThisViewer(watched)) {
+        if (e->type() == QEvent::Wheel) {
+            auto *we = static_cast<QWheelEvent *>(e);
+            if (we->modifiers() == Qt::NoModifier && we->angleDelta().y() != 0) {
+                // Only react to wheel events on the part's widget (the image view),
+                // not on toolbars, menus, or other widgets within the viewer window.
+                auto *pvb = dynamic_cast<PanelViewerBase *>(tabWidget.currentWidget());
+                if (pvb && pvb->part() && pvb->part()->widget() && watched == pvb->part()->widget()) {
+                    we->accept();
+                    // scrolling up shows the previous image, scrolling down the next one
+                    stepImage(we->angleDelta().y() > 0);
+                    return true;
+                }
+            }
+        } else if (e->type() == QEvent::KeyPress) {
+            auto *ke = static_cast<QKeyEvent *>(e);
+            if (ke->modifiers() == Qt::NoModifier) {
+                if (ke->key() == Qt::Key_Right || ke->key() == Qt::Key_Down) {
+                    ke->accept();
+                    stepImage(true);
+                    return true;
+                } else if (ke->key() == Qt::Key_Left || ke->key() == Qt::Key_Up) {
+                    ke->accept();
+                    stepImage(false);
+                    return true;
+                }
+            }
+        }
+    }
+
     // TODO: after porting to Qt5/KF5 we never catch *ANY* KeyPress or ShortcutOverride events here anymore.
     // Should look into if there is any way to fix it. Currently if a KPart has same shortcut as KrViewer then
     // it causes a conflict, messagebox shown to user and no action triggered.
@@ -510,6 +559,59 @@ bool KrViewer::queryClose()
             return false;
     }
     return true;
+}
+
+bool KrViewer::isImagePartDisplayed() const
+{
+    auto *pvb = dynamic_cast<PanelViewerBase *>(tabWidget.currentWidget());
+    if (!pvb || pvb->isEditor())
+        return false;
+
+    return ImageBrowser::isImagePart(pvb->part());
+}
+
+bool KrViewer::belongsToThisViewer(QObject *watched) const
+{
+    if (!watched)
+        return false;
+
+    // The event has to be sent to a widget of this very viewer window,
+    // otherwise another KrViewer window would react on it as well.
+    auto *widget = qobject_cast<QWidget *>(watched);
+    if (widget)
+        return widget->window() == const_cast<KrViewer *>(this);
+
+    auto *pvb = dynamic_cast<PanelViewerBase *>(tabWidget.currentWidget());
+    if (!pvb)
+        return false;
+
+    return watched == pvb->part() || watched == pvb->part()->widget();
+}
+
+void KrViewer::stepImage(bool forward)
+{
+    auto *pvb = dynamic_cast<PanelViewerBase *>(tabWidget.currentWidget());
+    if (!pvb)
+        return;
+
+    imageBrowser->setPart(pvb->part());
+
+    // Compute the target URL and let PanelViewerBase::openUrl() load it, so
+    // that the tab title / tooltip are updated via the urlChanged signal
+    // (reusing the part in place - no new tab or window).
+    QUrl target = imageBrowser->nextUrl(forward);
+    if (target.isValid())
+        pvb->openUrl(target);
+}
+
+void KrViewer::nextImage()
+{
+    stepImage(true);
+}
+
+void KrViewer::prevImage()
+{
+    stepImage(false);
 }
 
 void KrViewer::viewGeneric()

@@ -123,6 +123,8 @@ constexpr bool navigationWithRightArrowQuicksearch = true;
 constexpr bool viewInSeparateWindow = false;
 // Hide Single Tab in Viewer
 constexpr bool viewerHideSingleTab = false;
+// Switch between images of the current directory with mouse wheel / arrow keys
+constexpr bool wheelSwitchImages = true;
 
 /////////////////////// [Advanced]
 // Permission Check ///
