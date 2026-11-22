@@ -6,6 +6,8 @@
 
 #include "imagebrowser.h"
 
+#include <algorithm>
+
 // QtCore
 #include <QDir>
 #include <QFileInfo>
@@ -14,7 +16,10 @@
 #include <QWidget>
 
 // KF
-#include <KParts/OpenUrlArguments>
+#include <KIO/Job>
+#include <KIO/ListJob>
+#include <KIO/UDSEntry>
+#include <KJob>
 #include <KParts/ReadOnlyPart>
 
 ImageBrowser::ImageBrowser(QObject *parent)
@@ -22,7 +27,10 @@ ImageBrowser::ImageBrowser(QObject *parent)
 {
 }
 
-ImageBrowser::~ImageBrowser() = default;
+ImageBrowser::~ImageBrowser()
+{
+    cancelPendingList();
+}
 
 bool ImageBrowser::isForwardWheelDelta(int deltaY)
 {
@@ -43,92 +51,45 @@ bool ImageBrowser::isImagePart(KParts::ReadOnlyPart *part)
         return false;
 
     const QUrl url = part->url();
-    if (!url.isValid() || !url.isLocalFile())
+    if (!url.isValid() || url.isEmpty())
         return false;
 
+    // mimeTypeForUrl() uses the file name for non-local URLs as well, so this
+    // works for file://, sftp:// and other KIO URLs without touching the file.
     QMimeDatabase db;
-    const QMimeType mime = db.mimeTypeForFile(url.toLocalFile(), QMimeDatabase::MatchExtension);
-    // QMimeType::inherits() walks the subtype hierarchy (e.g. image/jpeg ->
-    // application/octet-stream) and would not match a generic "image/" type,
-    // so the top-level type name is checked directly.
+    const QMimeType mime = db.mimeTypeForUrl(url);
+    // QMimeType::inherits() walks the subtype hierarchy and would not match a
+    // generic "image/" type, so the top-level type name is checked directly.
     return mime.name().startsWith(QLatin1String("image/"), Qt::CaseInsensitive);
 }
 
 void ImageBrowser::setPart(KParts::ReadOnlyPart *part)
 {
+    const QUrl oldUrl = m_part ? m_part->url() : QUrl();
+    if (m_part == part && (!part || part->url() == oldUrl) && (m_listReady || m_listJob))
+        return;
+
+    cancelPendingList();
     m_part = part;
-    m_images.clear();
-    m_currentDir.clear();
+
+    if (part)
+        ensureList();
 }
 
 bool ImageBrowser::canStep(bool /*forward*/)
 {
-    if (m_images.isEmpty())
-        refreshImageList();
-    if (m_images.size() < 2)
-        return false;
+    ensureList();
+    return m_listReady && m_images.size() >= 2;
+}
 
-    // nextUrl() wraps around the image list, so both directions lead
-    // somewhere as long as there are at least 2 images.
-    return true;
+bool ImageBrowser::hasPendingStep() const
+{
+    return m_hasPendingStep;
 }
 
 void ImageBrowser::reset()
 {
-    m_images.clear();
-    m_currentDir.clear();
-}
-
-void ImageBrowser::refreshImageList()
-{
-    m_images.clear();
-    m_currentDir.clear();
-
-    if (!m_part)
-        return;
-
-    const QUrl url = m_part->url();
-    if (!url.isValid() || !url.isLocalFile())
-        return;
-
-    const QString localPath = QDir::toNativeSeparators(url.path());
-    const QFileInfo fileInfo(localPath);
-    const QString dirPath = fileInfo.absolutePath();
-    if (dirPath.isEmpty())
-        return;
-
-    QDir dir(dirPath);
-    if (!dir.exists())
-        return;
-
-    QMimeDatabase db;
-    const QStringList entries = dir.entryList(QDir::Files | QDir::Readable | QDir::Hidden, QDir::Name);
-
-    for (const QString &entry : entries) {
-        const QString path = dir.absoluteFilePath(entry);
-        if (QFileInfo(path).isDir())
-            continue;
-
-        const QMimeType mime = db.mimeTypeForFile(path, QMimeDatabase::MatchExtension);
-        if (mime.name().startsWith(QLatin1String("image/"), Qt::CaseInsensitive)) {
-            m_images.append(path);
-        }
-    }
-
-    m_currentDir = dirPath;
-}
-
-int ImageBrowser::currentIndex() const
-{
-    if (!m_part)
-        return -1;
-
-    const QUrl url = m_part->url();
-    if (!url.isValid() || !url.isLocalFile())
-        return -1;
-
-    const QString path = QDir::toNativeSeparators(url.path());
-    return static_cast<int>(m_images.indexOf(path));
+    cancelPendingList();
 }
 
 QUrl ImageBrowser::nextUrl(bool forward)
@@ -137,15 +98,20 @@ QUrl ImageBrowser::nextUrl(bool forward)
         return QUrl();
 
     const QUrl url = m_part->url();
-    if (!url.isValid() || !url.isLocalFile())
+    if (!url.isValid() || url.isEmpty())
         return QUrl();
 
-    // Rebuild the list when the directory changed or the list is empty.
-    if (m_images.isEmpty() || dirPath() != m_currentDir) {
-        refreshImageList();
+    ensureList();
+
+    if (!m_listReady) {
+        // A remote listing is still running. Remember the direction and let
+        // nextUrlReady() deliver the target once the list is available.
+        m_pendingForward = forward;
+        m_hasPendingStep = true;
+        return QUrl();
     }
 
-    if (m_images.size() < 2 || !canStep(forward))
+    if (m_images.size() < 2)
         return QUrl();
 
     int index = currentIndex();
@@ -156,24 +122,129 @@ QUrl ImageBrowser::nextUrl(bool forward)
     }
 
     index += forward ? 1 : -1;
-    const int count = static_cast<int>(m_images.size());
+    const int count = m_images.size();
     if (index < 0)
         index = count - 1;
     else if (index >= count)
         index = 0;
 
-    const QString newPath = m_images.at(index);
-    return QUrl::fromLocalFile(newPath);
+    return m_images.at(index);
 }
 
-QString ImageBrowser::dirPath() const
+void ImageBrowser::ensureList()
 {
     if (!m_part)
-        return QString();
+        return;
 
     const QUrl url = m_part->url();
-    if (!url.isValid() || !url.isLocalFile())
-        return QString();
+    if (!url.isValid() || url.isEmpty())
+        return;
 
-    return QFileInfo(QDir::toNativeSeparators(url.path())).absolutePath();
+    const QUrl dir = directoryUrl(url);
+    if ((m_listReady || m_listJob) && dir == m_currentDirUrl)
+        return;
+
+    cancelPendingList();
+    m_currentDirUrl = dir;
+
+    if (url.isLocalFile()) {
+        const QDir directory(QDir::toNativeSeparators(dir.toLocalFile()));
+        if (!directory.exists())
+            return;
+
+        QMimeDatabase db;
+        const QStringList entries = directory.entryList(QDir::Files | QDir::Readable | QDir::Hidden, QDir::Name);
+        for (const QString &entry : entries) {
+            const QString path = QDir::toNativeSeparators(directory.absoluteFilePath(entry));
+            const QMimeType mime = db.mimeTypeForFile(path, QMimeDatabase::MatchExtension);
+            if (mime.name().startsWith(QLatin1String("image/"), Qt::CaseInsensitive))
+                m_images.append(QUrl::fromLocalFile(path));
+        }
+        m_listReady = true;
+        return;
+    }
+
+    // Remote URL (sftp://, fish://, ...): list it asynchronously through KIO.
+    startRemoteList(dir);
+}
+
+void ImageBrowser::startRemoteList(const QUrl &dirUrl)
+{
+    KIO::ListJob *job = KIO::listDir(dirUrl, KIO::HideProgressInfo);
+    if (!job)
+        return;
+
+    job->setParent(this);
+    // Keep the default KIO UI delegate: it is needed to ask for credentials
+    // on WebDAV/SFTP servers. KIO::HideProgressInfo above only suppresses the
+    // progress dialog; list failures still report an error through KIO.
+    m_listJob = job;
+
+    connect(job, &KIO::ListJob::entries, this, [this](KIO::Job *, const KIO::UDSEntryList &list) {
+        QMimeDatabase db;
+        for (const KIO::UDSEntry &entry : list) {
+            const QString name = entry.stringValue(KIO::UDSEntry::UDS_NAME);
+            if (name.isEmpty() || name == QLatin1String(".") || name == QLatin1String(".."))
+                continue;
+
+            QUrl entryUrl = m_currentDirUrl.resolved(QUrl(name));
+            const QString rawUrl = entry.stringValue(KIO::UDSEntry::UDS_URL);
+            if (!rawUrl.isEmpty())
+                entryUrl = QUrl(rawUrl);
+            if (!entryUrl.isValid())
+                continue;
+
+            QString mimeName = entry.stringValue(KIO::UDSEntry::UDS_MIME_TYPE);
+            if (mimeName.isEmpty())
+                mimeName = db.mimeTypeForUrl(entryUrl).name();
+            if (mimeName.startsWith(QLatin1String("image/"), Qt::CaseInsensitive))
+                m_images.append(entryUrl);
+        }
+    });
+
+    connect(job, &KJob::result, this, [this](KJob *finishedJob) {
+        if (m_listJob != finishedJob)
+            return;
+
+        m_listJob = nullptr;
+        std::sort(m_images.begin(), m_images.end(), [](const QUrl &a, const QUrl &b) {
+            return a.fileName().compare(b.fileName(), Qt::CaseInsensitive) < 0;
+        });
+
+        m_listReady = (finishedJob->error() == 0);
+        if (!m_listReady)
+            m_images.clear();
+
+        if (m_hasPendingStep) {
+            m_hasPendingStep = false;
+            emit nextUrlReady(m_listReady ? nextUrl(m_pendingForward) : QUrl());
+        }
+    });
+}
+
+void ImageBrowser::cancelPendingList()
+{
+    if (m_listJob) {
+        disconnect(m_listJob, nullptr, this, nullptr);
+        m_listJob->kill();
+        m_listJob = nullptr;
+    }
+
+    m_images.clear();
+    m_currentDirUrl = QUrl();
+    m_listReady = false;
+    m_hasPendingStep = false;
+}
+
+int ImageBrowser::currentIndex() const
+{
+    if (!m_part)
+        return -1;
+
+    return m_images.indexOf(m_part->url());
+}
+
+QUrl ImageBrowser::directoryUrl(const QUrl &url)
+{
+    return url.adjusted(QUrl::RemoveFilename | QUrl::StripTrailingSlash);
 }

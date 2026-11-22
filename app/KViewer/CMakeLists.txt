@@ -38,6 +38,7 @@ if(BUILD_TESTING)
         PRIVATE
         Qt6::Widgets
         KF6::Parts
+        KF6::KIOCore
         KF6::ConfigCore
         KF6::CoreAddons
     )

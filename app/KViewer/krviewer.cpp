@@ -361,14 +361,36 @@ void KrViewer::stepImage(bool forward)
     if (!pvb)
         return;
 
+    // A previous remote listing may still be pending for another direction.
+    if (m_imageStepConnection)
+        disconnect(m_imageStepConnection);
+
+    QPointer<PanelViewerBase> target = pvb;
     imageBrowser->setPart(pvb->part());
+
+    // Local directories produce the URL immediately. Remote directories
+    // (sftp://, ...) are listed asynchronously by ImageBrowser; in that case
+    // keep one connection so the result is opened only in the tab that
+    // requested it.
+    m_imageStepConnection = connect(imageBrowser, &ImageBrowser::nextUrlReady, this, [this, target](const QUrl &url) {
+        m_imageStepConnection = QMetaObject::Connection();
+        if (!target || !url.isValid())
+            return;
+        if (tabWidget.currentWidget() != target)
+            return;
+        target->openUrl(url);
+    }, Qt::SingleShotConnection);
 
     // Compute the target URL and let PanelViewerBase::openUrl() load it, so
     // that the tab title / tooltip are updated via the urlChanged signal
     // (reusing the part in place - no new tab or window).
-    QUrl target = imageBrowser->nextUrl(forward);
-    if (target.isValid())
-        pvb->openUrl(target);
+    const QUrl targetUrl = imageBrowser->nextUrl(forward);
+    if (targetUrl.isValid() || !imageBrowser->hasPendingStep()) {
+        disconnect(m_imageStepConnection);
+        m_imageStepConnection = QMetaObject::Connection();
+        if (targetUrl.isValid() && target)
+            target->openUrl(targetUrl);
+    }
 }
 
 void KrViewer::nextImage()

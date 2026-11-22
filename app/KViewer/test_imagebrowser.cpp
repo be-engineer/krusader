@@ -84,6 +84,14 @@ int main(int argc, char **argv)
 
     check(!ImageBrowser::isImagePart(nullptr), "isImagePart() handles nullptr");
 
+    StubPart remoteImagePart(nullptr);
+    remoteImagePart.setUrlPublic(QUrl(QStringLiteral("sftp://example.com/photos/remote.png")));
+    check(ImageBrowser::isImagePart(&remoteImagePart), "isImagePart() detects a remote image by URL");
+
+    StubPart remoteTextPart(nullptr);
+    remoteTextPart.setUrlPublic(QUrl(QStringLiteral("sftp://example.com/photos/remote.txt")));
+    check(!ImageBrowser::isImagePart(&remoteTextPart), "isImagePart() rejects a remote non-image");
+
     // --- wheel direction mapping --------------------------------------
     check(!ImageBrowser::isForwardWheelDelta(120), "wheel up (positive delta) selects the previous image");
     check(ImageBrowser::isForwardWheelDelta(-120), "wheel down (negative delta) selects the next image");

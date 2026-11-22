@@ -123,6 +123,7 @@ private:
     ViewerTabWidget tabWidget;
     QPointer<QWidget> returnFocusTo;
     ImageBrowser *imageBrowser;
+    QMetaObject::Connection m_imageStepConnection;
 
     QAction *detachAction;
     QAction *printAction;
