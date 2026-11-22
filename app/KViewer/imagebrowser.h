@@ -13,6 +13,7 @@
 #include <QUrl>
 #include <QVector>
 
+#include <KFileItem>
 #include <KParts/ReadOnlyPart>
 
 class QWidget;
@@ -84,13 +85,17 @@ public slots:
     /**
      * Compute the next/previous image URL of the current directory.
      * For local directories the URL is returned immediately. For remote
-     * directories an invalid URL is returned and nextUrlReady() is emitted
+     * directories an invalid URL is returned and nextItemReady() is emitted
      * once the directory listing has finished.
-     *
-     * @param forward true: next image, false: previous image
-     * @return the target URL, or an invalid URL if it is not available yet
      */
     QUrl nextUrl(bool forward);
+
+    /**
+     * Like nextUrl(), but returns the full KFileItem from the directory
+     * listing. Opening that item avoids a second KIO::stat() (and thus a
+     * possible second authentication) in PanelViewerBase::openUrl().
+     */
+    KFileItem nextItem(bool forward);
 
     /**
      * Forget the cached list of images and cancel any pending list job.
@@ -99,10 +104,10 @@ public slots:
 
 Q_SIGNALS:
     /**
-     * Emitted after a pending remote listing finishes. The URL is invalid if
+     * Emitted after a pending remote listing finishes. The item is null if
      * the listing failed or there is no other image to show.
      */
-    void nextUrlReady(const QUrl &url);
+    void nextItemReady(const KFileItem &item);
 
 private:
     /**
@@ -132,7 +137,7 @@ private:
     static QUrl directoryUrl(const QUrl &url);
 
     QPointer<KParts::ReadOnlyPart> m_part;
-    QVector<QUrl> m_images; // image URLs, sorted by file name
+    QVector<KFileItem> m_items; // image items, sorted by file name
     QUrl m_currentDirUrl;
     KIO::ListJob *m_listJob = nullptr;
     bool m_listReady = false;

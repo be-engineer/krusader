@@ -54,6 +54,17 @@ public slots:
 
     void openUrl(const QUrl &url);
 
+    /**
+     * Open an item that was already obtained from a KIO directory listing.
+     * This avoids the extra KIO::stat() (and possible re-authentication) that
+     * openUrl() performs for remote URLs.
+     */
+    void openFileItem(const KFileItem &fi)
+    {
+        emit urlChanged(this, fi.url());
+        openFile(fi);
+    }
+
 signals:
     void openUrlRequest(const QUrl &url);
     void urlChanged(PanelViewerBase *, const QUrl &);

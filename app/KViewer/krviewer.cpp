@@ -372,24 +372,26 @@ void KrViewer::stepImage(bool forward)
     // (sftp://, ...) are listed asynchronously by ImageBrowser; in that case
     // keep one connection so the result is opened only in the tab that
     // requested it.
-    m_imageStepConnection = connect(imageBrowser, &ImageBrowser::nextUrlReady, this, [this, target](const QUrl &url) {
+    m_imageStepConnection = connect(imageBrowser, &ImageBrowser::nextItemReady, this, [this, target](const KFileItem &item) {
         m_imageStepConnection = QMetaObject::Connection();
-        if (!target || !url.isValid())
+        if (!target || item.isNull())
             return;
         if (tabWidget.currentWidget() != target)
             return;
-        target->openUrl(url);
+        // The item already contains the URL and MIME type from the directory
+        // listing. Opening it avoids another KIO::stat() for remote URLs.
+        target->openFileItem(item);
     }, Qt::SingleShotConnection);
 
-    // Compute the target URL and let PanelViewerBase::openUrl() load it, so
-    // that the tab title / tooltip are updated via the urlChanged signal
-    // (reusing the part in place - no new tab or window).
-    const QUrl targetUrl = imageBrowser->nextUrl(forward);
-    if (targetUrl.isValid() || !imageBrowser->hasPendingStep()) {
+    // Compute the target item and open it through PanelViewerBase so that the
+    // tab title / tooltip are updated (reusing the part in place - no new tab
+    // or window).
+    const KFileItem targetItem = imageBrowser->nextItem(forward);
+    if (!targetItem.isNull() || !imageBrowser->hasPendingStep()) {
         disconnect(m_imageStepConnection);
         m_imageStepConnection = QMetaObject::Connection();
-        if (targetUrl.isValid() && target)
-            target->openUrl(targetUrl);
+        if (!targetItem.isNull() && target)
+            target->openFileItem(targetItem);
     }
 }
 
