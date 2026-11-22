@@ -27,6 +27,7 @@
 #include <KParts/PartManager>
 
 #include "../krglobal.h"
+#include "imagebrowser.h"
 #include "viewertabbar.h"
 
 class PanelViewerBase;
@@ -71,6 +72,9 @@ public slots:
 
     void checkModified();
 
+    void nextImage();
+    void prevImage();
+
 protected:
     virtual bool queryClose() override;
     virtual void changeEvent(QEvent *e) override;
@@ -95,6 +99,19 @@ private:
     void removePart(KParts::ReadOnlyPart *part);
     bool isPartAdded(KParts::Part *part);
 
+    /**
+     * @return true if the currently displayed part shows an image
+     */
+    bool isImagePartDisplayed() const;
+    /**
+     * Show the next/previous image of the current directory.
+     */
+    void stepImage(bool forward);
+    /**
+     * @return true if the event sender belongs to this viewer window
+     */
+    bool belongsToThisViewer(QObject *watched) const;
+
     static void activateWindow(QWidget *window);
     static KrViewer *getViewer(bool new_window);
     static QString makeTabText(PanelViewerBase *pvb);
@@ -105,6 +122,7 @@ private:
     QMenu *viewerMenu;
     ViewerTabWidget tabWidget;
     QPointer<QWidget> returnFocusTo;
+    ImageBrowser *imageBrowser;
 
     QAction *detachAction;
     QAction *printAction;

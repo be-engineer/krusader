@@ -134,6 +134,9 @@
 // Hide Single Tab in Viewer
 #define _ViewerHideSingleTab false
 
+// Switch between images of the current directory with mouse wheel / arrow keys
+#define _WheelSwitchImages true
+
 /////////////////////// [Advanced]
 // Permission Check ///
 // #define _PermCheck     true

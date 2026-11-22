@@ -2,6 +2,7 @@ set(KViewer_SRCS
     krviewer.cpp
     panelviewer.cpp
     diskusageviewer.cpp
+    imagebrowser.cpp
     lister.cpp
     viewertabbar.cpp)
 
@@ -26,3 +27,18 @@ target_link_libraries(KViewer
     KF6::WidgetsAddons
     KF6::XmlGui
 )
+
+# Standalone unit test for ImageBrowser
+if(BUILD_TESTING)
+    add_executable(KViewerTestImageBrowser
+        test_imagebrowser.cpp
+        imagebrowser.cpp
+    )
+    target_link_libraries(KViewerTestImageBrowser
+        PRIVATE
+        Qt6::Widgets
+        KF6::Parts
+        KF6::ConfigCore
+        KF6::CoreAddons
+    )
+endif()
